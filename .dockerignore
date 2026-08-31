@@ -1,0 +1,7 @@
+.git
+calib_data
+output
+pics
+build
+**/.DS_Store
+docker-compose.yml

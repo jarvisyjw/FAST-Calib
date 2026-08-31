@@ -1,0 +1,13 @@
+services:
+  fast-calib:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: fast-calib:web
+    ports:
+      - "8080:8080"
+    volumes:
+      # Calibration scenes (rosbags + optional images), read-only
+      - ./calib_data:/data:ro
+      # Calibration outputs (results, PCDs, logs)
+      - ./output:/output

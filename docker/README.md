@@ -54,6 +54,19 @@ Then open **http://localhost:8080** in a browser.
    is drawn in the LiDAR frame with the camera frame axes at the solved
    extrinsic pose.
 
+5. **Multi-scene calibration** — every single-scene run appends its 4
+   circle-center pairs to `output/circle_center_record.txt`. Once **≥ 3
+   scenes** (different board poses) are recorded, "Run multi-scene
+   calibration" becomes available: it pools the last 3 scenes (12 pairs) into
+   one least-squares solve and reports the joint RMSE plus the per-scene RMSE
+   under the joint extrinsic. The joint result gets its own layer
+   ("Colored cloud (multi-scene)") so it can be toggled against the
+   single-scene result; the top-left depth panel switches to a **side-by-side
+   comparison** (single-scene | multi-scene) rendered from the same dense
+   cloud, and the **"Show multi-scene cloud only"** checkbox in Layers hides
+   everything else for a clean view of the joint reconstruction. Use "Clear
+   recorded scenes" before starting a new sensor/scene session.
+
 ## Environment variables
 
 | Variable | Default | Meaning |

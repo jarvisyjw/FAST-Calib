@@ -9,6 +9,60 @@ which is included as part of this source code package.
 #include "lidar_detect.hpp"
 #include "data_preprocess.hpp"
 
+// Save intermediate pipeline clouds as PCD files (used by the web visualization
+// platform; enabled via the "save_intermediate" ROS param).
+static void saveIntermediateClouds(
+    const Params &params,
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_input,
+    const LidarDetectPtr &lidarDetectPtr,
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &lidar_centers,
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &qr_centers)
+{
+  std::string dir = params.output_path;
+  if (dir.back() != '/') dir += '/';
+
+  auto saveCloud = [&dir](const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                          const std::string &name) {
+    if (cloud->empty()) return;
+    cloud->width = cloud->size();
+    cloud->height = 1;
+    cloud->is_dense = true;
+    try {
+      if (pcl::io::savePCDFileASCII(dir + name, *cloud) == 0)
+        std::cout << BOLDYELLOW << "[Record] Saved " << name << " (" << cloud->size()
+                  << " pts) to " << BOLDWHITE << dir << name << RESET << std::endl;
+      else
+        std::cerr << BOLDRED << "[Error] Failed to save " << dir + name << RESET << std::endl;
+    } catch (const std::exception &e) {
+      std::cerr << BOLDRED << "[Error] Failed to save " << dir + name << ": " << e.what()
+                << RESET << std::endl;
+    }
+  };
+
+  // Drop non-finite points, then downsample the raw input cloud to keep the
+  // file size manageable.
+  pcl::PointCloud<pcl::PointXYZ>::Ptr input_clean(new pcl::PointCloud<pcl::PointXYZ>);
+  input_clean->reserve(cloud_input->size());
+  for (const auto &pt : cloud_input->points) {
+    if (std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z))
+      input_clean->push_back(pt);
+  }
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr input_down(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::VoxelGrid<pcl::PointXYZ> voxel;
+  voxel.setInputCloud(input_clean);
+  voxel.setLeafSize(0.05f, 0.05f, 0.05f);
+  voxel.filter(*input_down);
+
+  saveCloud(input_down, "input_cloud.pcd");
+  saveCloud(lidarDetectPtr->getFilteredCloud(), "filtered_cloud.pcd");
+  saveCloud(lidarDetectPtr->getPlaneCloud(), "plane_cloud.pcd");
+  saveCloud(lidarDetectPtr->getAlignedCloud(), "aligned_cloud.pcd");
+  saveCloud(lidarDetectPtr->getEdgeCloud(), "edge_cloud.pcd");
+  saveCloud(lidar_centers, "lidar_centers.pcd");
+  saveCloud(qr_centers, "qr_centers.pcd");
+}
+
 int main(int argc, char **argv) 
 {
     ros::init(argc, argv, "mono_qr_pattern");
@@ -74,6 +128,11 @@ int main(int argc, char **argv)
     projectPointCloudToImage(cloud_input, transformation, qrDetectPtr->cameraMatrix_, qrDetectPtr->distCoeffs_, img_input, colored_cloud);
 
     saveCalibrationResults(params, transformation, colored_cloud, qrDetectPtr->imageCopy_);
+
+    if (params.save_intermediate)
+    {
+      saveIntermediateClouds(params, cloud_input, lidarDetectPtr, lidar_centers, qr_centers);
+    }
 
     ros::Publisher colored_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("colored_cloud", 1);
     ros::Publisher aligned_lidar_centers_pub = nh.advertise<sensor_msgs::PointCloud2>("aligned_lidar_centers", 1);

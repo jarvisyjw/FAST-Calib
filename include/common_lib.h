@@ -81,6 +81,7 @@ struct Params {
   double marker_size, delta_width_qr_center, delta_height_qr_center;
   double delta_width_circles, delta_height_circles, circle_radius;
   int min_detected_markers;
+  bool save_intermediate;
   string image_path;
   string bag_path;
   string lidar_topic;
@@ -105,6 +106,7 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("delta_width_circles", params.delta_width_circles, 0.5);
   nh.param("delta_height_circles", params.delta_height_circles, 0.4);
   nh.param("min_detected_markers", params.min_detected_markers, 3);
+  nh.param("save_intermediate", params.save_intermediate, false);
   nh.param("circle_radius", params.circle_radius, 0.12);
   nh.param("image_path", params.image_path, string("/home/chunran/calib_ws/src/fast_calib/data/image.png"));
   nh.param("bag_path", params.bag_path, string("/home/chunran/calib_ws/src/fast_calib/data/input.bag"));

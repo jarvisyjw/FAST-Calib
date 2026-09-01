@@ -3,3 +3,4 @@ output/*
 build/*
 __pycache__/
 output_online/*
+pics/demo_usage.mov

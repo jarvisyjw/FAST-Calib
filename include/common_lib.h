@@ -82,6 +82,10 @@ struct Params {
   double delta_width_circles, delta_height_circles, circle_radius;
   int min_detected_markers;
   bool save_intermediate;
+  double sync_tolerance;  // online node: max |dt| (s) for a lidar/camera pair
+  int accumulate_frames;  // online node: LiDAR frames merged per capture
+                          // (offline accumulates the whole bag; a single frame
+                          // is too sparse for the circle detection thresholds)
   string image_path;
   string bag_path;
   string lidar_topic;
@@ -107,6 +111,8 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("delta_height_circles", params.delta_height_circles, 0.4);
   nh.param("min_detected_markers", params.min_detected_markers, 3);
   nh.param("save_intermediate", params.save_intermediate, false);
+  nh.param("sync_tolerance", params.sync_tolerance, 0.5);
+  nh.param("accumulate_frames", params.accumulate_frames, 20);
   nh.param("circle_radius", params.circle_radius, 0.12);
   nh.param("image_path", params.image_path, string("/home/chunran/calib_ws/src/fast_calib/data/image.png"));
   nh.param("bag_path", params.bag_path, string("/home/chunran/calib_ws/src/fast_calib/data/input.bag"));

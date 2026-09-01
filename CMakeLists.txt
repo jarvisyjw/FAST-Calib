@@ -9,13 +9,14 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   cv_bridge
   image_transport
+  std_srvs
 )
 
 find_package(PCL 1.10 REQUIRED)
 find_package(OpenCV REQUIRED)
 
 catkin_package(
-  CATKIN_DEPENDS roscpp sensor_msgs pcl_conversions pcl_ros cv_bridge image_transport
+  CATKIN_DEPENDS roscpp sensor_msgs pcl_conversions pcl_ros cv_bridge image_transport std_srvs
 )
 
 include_directories(
@@ -41,6 +42,13 @@ target_link_libraries(fast_calib
 
 add_executable(multi_fast_calib src/multi_scene.cpp)
 target_link_libraries(multi_fast_calib
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+add_executable(fast_calib_online src/online_main.cpp)
+target_link_libraries(fast_calib_online
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}

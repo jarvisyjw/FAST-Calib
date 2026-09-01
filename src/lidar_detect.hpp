@@ -13,6 +13,10 @@ which is included as part of this source code package.
 #include <opencv2/opencv.hpp>
 #include <ros/ros.h>
 #include <pcl/filters/voxel_grid.h>
+#include <cfloat>
+#include <cstdint>
+#include <queue>
+#include <vector>
 #include "common_lib.h"
 
 class LidarDetect
@@ -233,8 +237,194 @@ public:
                 }
             }
         }
+
+        // Fallback for sparse clouds (e.g. online capture of a few Livox
+        // frames): the boundary estimator above needs dense, uniform sampling
+        // and fails on sparse rose-pattern scans. Holes are large EMPTY
+        // regions in the board plane though, so detect them on a 2D occupancy
+        // grid instead.
+        if (center_cloud->size() < 4)
+        {
+            ROS_INFO("Boundary-based detection found %zu circles, falling back to grid hole detection.",
+                     center_cloud->size());
+            center_cloud->clear();
+            center_z0_cloud_->clear();
+            detectHolesOnGrid(center_cloud, R_inv, average_z);
+        }
     }
 
+private:
+    // Detect circular holes as interior empty regions of the rasterized
+    // plane-aligned cloud, then fit a circle to the occupied ring of cells
+    // around each region. Robust at low point density.
+    void detectHolesOnGrid(pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud,
+                           const Eigen::Matrix3d &R_inv, double average_z)
+    {
+        if (aligned_cloud_->empty()) return;
+        const double RES = 0.01;          // 1 cm grid cells
+        const int GAP_BRIDGE = 2;         // closing kernel radius (5x5)
+        const int RIM_DIST = 2;           // ring width around a hole (cells)
+        const double R_TOL = 0.04;        // |fitted r - circle_radius| gate
+
+        float minx = FLT_MAX, miny = FLT_MAX, maxx = -FLT_MAX, maxy = -FLT_MAX;
+        for (const auto &p : *aligned_cloud_)
+        {
+            minx = std::min(minx, p.x); miny = std::min(miny, p.y);
+            maxx = std::max(maxx, p.x); maxy = std::max(maxy, p.y);
+        }
+        minx -= 0.05f; miny -= 0.05f; maxx += 0.05f; maxy += 0.05f;
+        const int W = int((maxx - minx) / RES) + 2;
+        const int H = int((maxy - miny) / RES) + 2;
+        auto at = [W](int x, int y) { return y * W + x; };
+
+        // Rasterize; remember which points land in each cell (for rim fitting)
+        std::vector<uint8_t> occ(W * H, 0);
+        std::vector<std::vector<int>> cell_pts(W * H);
+        for (size_t i = 0; i < aligned_cloud_->size(); ++i)
+        {
+            const auto &p = aligned_cloud_->points[i];
+            int gx = int((p.x - minx) / RES), gy = int((p.y - miny) / RES);
+            if (gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+            occ[at(gx, gy)] = 1;
+            cell_pts[at(gx, gy)].push_back(int(i));
+        }
+
+        // Morphological closing (dilate then erode with a square kernel) to
+        // bridge 1-2 cell scan gaps; the holes (~24 cm) are far larger.
+        std::vector<uint8_t> closed(W * H, 0), dilated(W * H, 0);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+            {
+                if (!occ[at(x, y)]) continue;
+                for (int dy = -GAP_BRIDGE; dy <= GAP_BRIDGE; ++dy)
+                    for (int dx = -GAP_BRIDGE; dx <= GAP_BRIDGE; ++dx)
+                    {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx >= 0 && nx < W && ny >= 0 && ny < H) dilated[at(nx, ny)] = 1;
+                    }
+            }
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+            {
+                bool full = true;
+                for (int dy = -GAP_BRIDGE; dy <= GAP_BRIDGE && full; ++dy)
+                    for (int dx = -GAP_BRIDGE; dx <= GAP_BRIDGE; ++dx)
+                    {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= W || ny < 0 || ny >= H || !dilated[at(nx, ny)])
+                        { full = false; break; }
+                    }
+                closed[at(x, y)] = full ? 1 : 0;
+            }
+
+        // Exterior = empty cells reachable from the grid border (BFS).
+        std::vector<uint8_t> exterior(W * H, 0);
+        std::queue<std::pair<int, int>> q;
+        for (int x = 0; x < W; ++x) { q.push({x, 0}); q.push({x, H - 1}); }
+        for (int y = 0; y < H; ++y) { q.push({0, y}); q.push({W - 1, y}); }
+        while (!q.empty())
+        {
+            int x = q.front().first, y = q.front().second; q.pop();
+            if (x < 0 || x >= W || y < 0 || y >= H) continue;
+            int id = at(x, y);
+            if (closed[id] || exterior[id]) continue;
+            exterior[id] = 1;
+            q.push({x + 1, y}); q.push({x - 1, y}); q.push({x, y + 1}); q.push({x, y - 1});
+        }
+
+        // Interior empty regions = hole candidates.
+        std::vector<uint8_t> seen(W * H, 0);
+        const double hole_area = M_PI * circle_radius_ * circle_radius_;
+        std::vector<uint8_t> rim_mask(W * H, 0);  // for the debug edge cloud
+        int holes_found = 0;
+        for (int y = 0; y < H && holes_found < 8; ++y)
+            for (int x = 0; x < W && holes_found < 8; ++x)
+            {
+                int id0 = at(x, y);
+                if (closed[id0] || exterior[id0] || seen[id0]) continue;
+                // BFS this region
+                std::vector<std::pair<int, int>> region;
+                q.push({x, y});
+                seen[id0] = 1;
+                while (!q.empty())
+                {
+                    int cx = q.front().first, cy = q.front().second; q.pop();
+                    region.push_back({cx, cy});
+                    const int dxs[4] = {1, -1, 0, 0}, dys[4] = {0, 0, 1, -1};
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        int nx = cx + dxs[k], ny = cy + dys[k];
+                        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+                        int nid = at(nx, ny);
+                        if (closed[nid] || exterior[nid] || seen[nid]) continue;
+                        seen[nid] = 1;
+                        q.push({nx, ny});
+                    }
+                }
+                double area = region.size() * RES * RES;
+                if (area < 0.3 * hole_area || area > 3.0 * hole_area) continue;
+
+                // Rim: original (unclosed) occupied cells within RIM_DIST.
+                std::vector<Eigen::Vector2d> rim;
+                for (const auto &cell : region)
+                    for (int dy = -RIM_DIST; dy <= RIM_DIST; ++dy)
+                        for (int dx = -RIM_DIST; dx <= RIM_DIST; ++dx)
+                        {
+                            int nx = cell.first + dx, ny = cell.second + dy;
+                            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+                            int nid = at(nx, ny);
+                            if (!occ[nid] || rim_mask[nid] == 2) continue;
+                            rim_mask[nid] = 2;  // claimed by this hole
+                            for (int pi : cell_pts[nid])
+                            {
+                                const auto &p = aligned_cloud_->points[pi];
+                                rim.push_back({p.x, p.y});
+                            }
+                        }
+                if (rim.size() < 10) continue;
+
+                // Kasa algebraic circle fit: x^2+y^2 + a x + b y + c = 0
+                Eigen::Matrix3d M = Eigen::Matrix3d::Zero();
+                Eigen::Vector3d v = Eigen::Vector3d::Zero();
+                for (const auto &p : rim)
+                {
+                    Eigen::Vector3d row(p.x(), p.y(), 1.0);
+                    M += row * row.transpose();
+                    v += row * (-(p.x() * p.x() + p.y() * p.y()));
+                }
+                Eigen::Vector3d sol = M.ldlt().solve(v);
+                double cx = -sol[0] / 2.0, cy = -sol[1] / 2.0;
+                double r2 = (sol[0] * sol[0] + sol[1] * sol[1]) / 4.0 - sol[2];
+                if (r2 <= 0) continue;
+                double r = std::sqrt(r2);
+                if (std::fabs(r - circle_radius_) > R_TOL) continue;
+
+                ++holes_found;
+                center_z0_cloud_->push_back(pcl::PointXYZ(cx, cy, 0.0));
+                Eigen::Vector3d original_point = R_inv * Eigen::Vector3d(cx, cy, average_z);
+                center_cloud->push_back(pcl::PointXYZ(original_point.x(),
+                                                      original_point.y(),
+                                                      original_point.z()));
+                ROS_INFO("Grid hole: center=(%.3f, %.3f) r=%.3f m, area=%.4f m^2, rim=%zu pts",
+                         cx, cy, r, area, rim.size());
+            }
+
+        // Show the rim points used by the grid fitter in the Layers panel.
+        if (holes_found > 0)
+        {
+            edge_cloud_->clear();
+            for (size_t i = 0; i < aligned_cloud_->size(); ++i)
+            {
+                const auto &p = aligned_cloud_->points[i];
+                int gx = int((p.x - minx) / RES), gy = int((p.y - miny) / RES);
+                if (gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+                if (rim_mask[at(gx, gy)] == 2) edge_cloud_->push_back(p);
+            }
+        }
+        ROS_INFO("Grid hole detection found %d holes.", holes_found);
+    }
+
+public:
     // 获取中间结果的点云
     pcl::PointCloud<pcl::PointXYZ>::Ptr getFilteredCloud() const { return filtered_cloud_; }
     pcl::PointCloud<pcl::PointXYZ>::Ptr getPlaneCloud() const { return plane_cloud_; }

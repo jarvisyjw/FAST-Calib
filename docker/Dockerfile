@@ -58,6 +58,9 @@ RUN python3 -c "import urllib.request; urllib.request.urlretrieve('https://boots
 
 # Built catkin workspace + web app + default config
 COPY --from=builder /opt/ws/devel /opt/ws/devel
+# The devel space puts /opt/ws/src on ROS_PACKAGE_PATH; rospack/rosrun need at
+# least the package manifest there to resolve `fast_calib` to its binaries.
+COPY package.xml /opt/ws/src/fast_calib/package.xml
 COPY config/ /opt/fast_calib/config/
 COPY web/ /opt/web/
 COPY docker/entrypoint.sh /opt/entrypoint.sh

@@ -1,0 +1,11 @@
+<launch>
+<!-- Online calibration node: subscribes to live LiDAR/camera topics and
+     exposes the /fast_calib_online/capture service (std_srvs/Trigger).
+     Each successful service call captures one synchronized frame pair,
+     runs the calibration pipeline and appends to circle_center_record.txt. -->
+
+	<rosparam file="$(find fast_calib)/config/qr_params.yaml" command="load" subst_value="true"/>
+
+	<node pkg="fast_calib" type="fast_calib_online" name="fast_calib_online" output="screen">
+	</node>
+</launch>

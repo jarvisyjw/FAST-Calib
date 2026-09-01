@@ -32,6 +32,24 @@ depth map, colored point clouds, full pipeline intermediates).
 5. **Full pipeline transparency**: every intermediate (filtered cloud, RANSAC
    plane, rim points, circle centers) is a toggleable 3D layer.
 
+## Demo
+
+▶️ **[Demo video: full online calibration in ~90 s](./pics/demo_usage.mp4)** —
+set topics, frame the board with the filter-box wireframe, 3 captures,
+automatic joint solve, live depth-map verification.
+
+<!-- TIP: for inline playback on GitHub, drag pics/demo_usage.mp4 into any
+     issue/PR comment box, copy the https://github.com/user-attachments/assets/...
+     URL it produces, and replace the link above with that bare URL. -->
+
+<p align="center">
+  <img src="./pics/panel.png" width="100%">
+  <font color=#a0a0a0 size=2>The web UI during online calibration — 3D scene with pipeline
+  layers (board plane, hole rims in orange, circle centers in red, filter-box
+  wireframe) and the control panel: (1) live-capture topics, (2) distance
+  filter, Run calibration button, and results with RMSE / T_cam_lidar.</font>
+</p>
+
 ---
 
 ## 1. Quick start (Docker)
